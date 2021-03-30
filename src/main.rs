@@ -12,6 +12,6 @@ fn main() {
     let tx_port = String::from("8080");
     let rx_port = String::from("8081");
 
-    let controller = Controller::new(ip, tx_port, rx_port);
+    let controller = Controller::new(ip, tx_port, rx_port, 2);
     controller.control_loop();
 }
