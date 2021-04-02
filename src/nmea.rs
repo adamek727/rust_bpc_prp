@@ -5,7 +5,7 @@ pub enum SimulatorResponseType {
     LeftOdometry{microsteps: i32},
     RightOdometry{microsteps: i32},
     Ok,
-    Sensor{index: u16, value: i32},
+    Sensor{index: usize, value: u16},
     Invalid,
 }
 
@@ -55,13 +55,12 @@ pub fn parse_nmea_message(msg: &str) -> SimulatorResponseType {
         match splited_msg[0].as_str() {
             "SENSOR" => {
                 return SimulatorResponseType::Sensor {
-                    index: splited_msg[1].trim().parse::<u16>().unwrap(),
-                    value: splited_msg[2].trim().parse::<i32>().unwrap(),
+                    index: splited_msg[1].trim().parse::<usize>().unwrap(),
+                    value: splited_msg[2].trim().parse::<u16>().unwrap(),
                 }
             },
             _ => {},
         }
-
     }
     SimulatorResponseType::Invalid
 }
