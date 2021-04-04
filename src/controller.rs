@@ -9,10 +9,13 @@ use chrono;
 use crate::nmea;
 use crate::message_factory;
 use crate::robot;
-use crate::robot::RobotStateMachine;
-use crate::motion_model::MotionModel;
+use crate::robot::{RobotStateMachine};
+use crate::primitives::Pose;
+use crate::motion_model::{MotionModel, WheelSpeeds, MotionParameters};
 use crate::motor_ramp_generator;
-use crate::motor_ramp_generator::MotorRampGenerator;
+use crate::motor_ramp_generator::{MotorRampGenerator, RampGeneratiorSide};
+use crate::dashboard::Dashboard;
+use termion::event::MouseButton::WheelDown;
 
 pub struct Controller {
     remote_ip: String,
@@ -39,14 +42,21 @@ impl Controller {
 
     pub fn run(&mut self) {
 
-        let motion_model = MotionModel::new(self.robot_constrains.chassis_base(), self.robot_constrains.wheel_radius());
+        let mut dashboard = Dashboard::new();
+
+        let motion_model = MotionModel::new(
+            &self.robot_constrains,
+            Pose::new(0.0, 0.0, 0.0)
+        );
         let mut left_wheel_ramp_gen = MotorRampGenerator::new(
             self.robot_constrains.max_acceleration_microsteps_per_sec(),
-                self.robot_constrains.max_microsteps_per_sec()
+            self.robot_constrains.max_microsteps_per_sec(),
+            RampGeneratiorSide::left,
         );
         let mut right_wheel_ramp_gen = MotorRampGenerator::new(
             self.robot_constrains.max_acceleration_microsteps_per_sec(),
-            self.robot_constrains.max_microsteps_per_sec()
+            self.robot_constrains.max_microsteps_per_sec(),
+            RampGeneratiorSide::right,
         );
 
         let (tx_data_from_simulator, rx_data_from_simulator) = channel();
@@ -66,13 +76,6 @@ impl Controller {
             }
         });
 
-
-        // let set_wheel_speed_channel = tx_data_to_simulator.clone();
-        // let set_wheel_speed_timer = timer::Timer::new();
-        // let guard = set_wheel_speed_timer.schedule_repeating(chrono::Duration::milliseconds(100), move || {
-        //     set_wheel_speed_channel.send(message_factory::get_left_wheel_speed_request(self.robot_stats.left_wheel_microsteps_per_sec() as f32));
-        //     set_wheel_speed_channel.send(message_factory::get_right_wheel_speed_request(100.0));
-        // });
 
         loop { // Main Loop
 
@@ -106,12 +109,33 @@ impl Controller {
                 }
             }
 
-            let wheel_speeds = motion_model.get_wheel_speeds(0.0, 10.5);
-            left_wheel_ramp_gen.set_required_microsteps_per_sec(motion_model.wheell_speed_to_microsteps(wheel_speeds.left_wheel_speed()));
-            right_wheel_ramp_gen.set_required_microsteps_per_sec( motion_model.wheell_speed_to_microsteps(wheel_speeds.right_wheel_speed()));
+            let required_motion = MotionParameters::new(0.2,3.14 / 2.0);
 
-            tx_data_to_simulator.send(message_factory::get_left_wheel_speed_request(left_wheel_ramp_gen.actual_microsteps_per_sec()));
-            tx_data_to_simulator.send(message_factory::get_right_wheel_speed_request(right_wheel_ramp_gen.actual_microsteps_per_sec()));
+            let wheel_speeds = motion_model.get_wheel_speeds( required_motion );
+            let wheel_speeds_in_microsteps = motion_model.wheel_speed_to_microsteps_with_saturation(wheel_speeds);
+            left_wheel_ramp_gen.set_required_microsteps_per_sec(&wheel_speeds_in_microsteps);
+            right_wheel_ramp_gen.set_required_microsteps_per_sec(&wheel_speeds_in_microsteps);
+
+            let actual_wheel_speed_in_microsteps = WheelSpeeds::new(
+                left_wheel_ramp_gen.actual_microsteps_per_sec(),
+                right_wheel_ramp_gen.actual_microsteps_per_sec(),
+            );
+            let actual_motion_params = motion_model.wheel_speed_to_robot_motion_parameters(
+                motion_model.microsteps_to_wheel_speed(
+                    actual_wheel_speed_in_microsteps
+                )
+            );
+
+            tx_data_to_simulator.send(message_factory::get_left_wheel_speed_request(actual_wheel_speed_in_microsteps.left_wheel_speed()));
+            tx_data_to_simulator.send(message_factory::get_right_wheel_speed_request(actual_wheel_speed_in_microsteps.right_wheel_speed()));
+
+            dashboard.render();
+            dashboard.set_pose(Pose::new(0.0, 0.0, 0.0));
+            dashboard.set_wheel_speed_required(wheel_speeds_in_microsteps);
+            dashboard.set_wheel_speed_actual(actual_wheel_speed_in_microsteps);
+            dashboard.set_motion_params_required(required_motion);
+            dashboard.set_motion_params_actual(actual_motion_params);
+
             sleep(Duration::from_millis(10));
         }
     }

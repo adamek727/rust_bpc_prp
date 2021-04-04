@@ -1,4 +1,6 @@
 use std::io::SeekFrom::Start;
+use crate::primitives::Pose;
+
 
 #[derive(Copy, Clone)]
 pub enum RobotStateMachine {
@@ -8,23 +10,7 @@ pub enum RobotStateMachine {
     Fail,
 }
 
-#[derive(Copy, Clone)]
-pub struct Pose {
-    x: f32,
-    y: f32,
-    z: f32,
-}
-
-impl Pose {
-    pub fn new(x: f32, y: f32, z:f32) -> Pose {
-        Pose { x, y, z }
-    }
-
-    pub fn x(&self) -> f32 { self.x }
-    pub fn y(&self) -> f32 { self.y }
-    pub fn z(&self) -> f32 { self.z }
-}
-
+#[derive(Clone)]
 pub struct RobotPhysicalConstrains {
     no_of_sensors: usize,
     sensor_poses: Vec<Pose>,
@@ -32,6 +18,9 @@ pub struct RobotPhysicalConstrains {
     wheel_radius: f32,
     max_acceleration_microsteps_per_sec: f32,
     max_microsteps_per_sec :f32,
+    steps_per_rotation: usize,
+    microsteps_per_step: usize,
+    microsteps_per_rotation: usize,
 }
 
 impl RobotPhysicalConstrains {
@@ -40,8 +29,20 @@ impl RobotPhysicalConstrains {
                chassis_base: f32,
                wheel_radius: f32,
                max_acceleration_microsteps_per_sec: f32,
-               max_microsteps_per_sec: f32) -> RobotPhysicalConstrains {
-        RobotPhysicalConstrains { no_of_sensors, sensor_poses, chassis_base, wheel_radius, max_acceleration_microsteps_per_sec, max_microsteps_per_sec}
+               max_microsteps_per_sec: f32,
+               steps_per_rotation: usize,
+               microsteps_per_step: usize) -> RobotPhysicalConstrains {
+
+        RobotPhysicalConstrains {
+            no_of_sensors,
+            sensor_poses,
+            chassis_base,
+            wheel_radius,
+            max_acceleration_microsteps_per_sec,
+            max_microsteps_per_sec,
+            steps_per_rotation,
+            microsteps_per_step,
+            microsteps_per_rotation: steps_per_rotation * microsteps_per_step}
     }
 
     pub fn no_of_sensors(&self) -> usize { self.no_of_sensors }
@@ -52,6 +53,9 @@ impl RobotPhysicalConstrains {
     }
     pub fn max_acceleration_microsteps_per_sec(&self) -> f32 { self.max_acceleration_microsteps_per_sec }
     pub fn max_microsteps_per_sec(&self) -> f32 { self.max_microsteps_per_sec }
+    pub fn steps_per_rotation(&self) -> usize { self.steps_per_rotation }
+    pub fn microsteps_per_step(&self) -> usize { self.microsteps_per_step }
+    pub fn microsteps_per_rotation(&self) -> usize { self.microsteps_per_rotation }
 }
 
 pub struct RobotStats {

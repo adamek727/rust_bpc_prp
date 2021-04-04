@@ -8,6 +8,8 @@ mod message_factory;
 mod robot;
 mod motion_model;
 mod motor_ramp_generator;
+mod dashboard;
+mod primitives;
 
 fn main() {
     let ip = String::from("127.0.0.1");
@@ -16,12 +18,15 @@ fn main() {
 
     let robot_constrains = robot::RobotPhysicalConstrains::new(
         2,
-        vec![robot::Pose::new(0.09, -0.01, 0.01),
-                         robot::Pose::new(0.09, 0.01, 0.01)],
+        vec![
+            primitives::Pose::new(0.09, -0.01, 0.01),
+            primitives::Pose::new(0.09, 0.01, 0.01)],
         0.16,
         0.04,
-        5000.0,
-        17500.0
+        4500.0,
+        10000.0,
+        200,
+        32
     );
 
     let mut controller = controller::Controller::new(ip, tx_port, rx_port, robot_constrains);
