@@ -5,6 +5,7 @@ use crate::motion_model::{WheelSpeeds, MotionParameters};
 
 pub struct Dashboard {
     pose: Pose,
+    robot_orientation: f32,
     wheel_speed_required: WheelSpeeds,
     wheel_speed_actual: WheelSpeeds,
     motion_params_required: MotionParameters,
@@ -16,6 +17,7 @@ impl Dashboard {
     pub fn new() -> Dashboard {
         Dashboard {
             pose: Pose::new(0.0, 0.0, 0.0),
+            robot_orientation: 0.0,
             wheel_speed_required: WheelSpeeds::new(0.0, 0.0),
             wheel_speed_actual: WheelSpeeds::new(0.0, 0.0),
             motion_params_required: MotionParameters::new(0.0, 0.0),
@@ -31,6 +33,7 @@ impl Dashboard {
         println!(" - Robot's Position - ");
         println!();
         println!("Pose -> x:\t{}\ty:\t{}", self.pose.x(), self.pose.y());
+        println!("Orient -> {}", self.robot_orientation);
 
         println!();
         println!(" - Motion Params - ");
@@ -53,6 +56,7 @@ impl Dashboard {
     }
 
     pub fn set_pose(&mut self, pose: Pose) { self.pose = pose; }
+    pub fn set_orientation(&mut self, orientation: f32) { self.robot_orientation = orientation; }
     pub fn set_wheel_speed_required(&mut self, wheel_speed_required: WheelSpeeds) { self.wheel_speed_required = wheel_speed_required; }
     pub fn set_wheel_speed_actual(&mut self, wheel_speed_required: WheelSpeeds) { self.wheel_speed_actual = wheel_speed_required; }
     pub fn set_motion_params_required(&mut self, motion_params_required: MotionParameters) { self.motion_params_required = motion_params_required; }

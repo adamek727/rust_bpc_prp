@@ -40,21 +40,27 @@ impl MotionParameters {
 }
 
 
-pub struct MotionModel<'rpc> {
+pub struct MotionModel {
     wheel_perimeter: f32,
-    robot_constrains: &'rpc RobotPhysicalConstrains,
+    robot_constrains: RobotPhysicalConstrains,
     robot_pose: Pose,
+    robot_orientation: f32,
 }
 
-impl MotionModel<'_> {
+impl MotionModel {
 
-    pub fn new(robot_constrains: &RobotPhysicalConstrains, init_pose: Pose) -> MotionModel {
+    pub fn new(robot_constrains: RobotPhysicalConstrains, init_pose: Pose, robot_orientation: f32) -> MotionModel {
+        let wheel_radius = robot_constrains.wheel_radius();
         MotionModel {
             robot_constrains,
-            wheel_perimeter: 2.0 * std::f32::consts::PI * robot_constrains.wheel_radius(),
+            wheel_perimeter: 2.0 * std::f32::consts::PI * wheel_radius,
             robot_pose: init_pose,
+            robot_orientation,
         }
     }
+
+    pub fn get_pose(&self) -> Pose { self.robot_pose }
+    pub fn get_orientation(&self) -> f32 { self.robot_orientation }
 
     pub fn get_wheel_speeds(&self, required: MotionParameters) -> WheelSpeeds {
 
@@ -97,6 +103,15 @@ impl MotionModel<'_> {
             linear_velocity: self.robot_constrains.wheel_radius() / 2.0 * (wheel_speed.right_wheel_speed + wheel_speed.left_wheel_speed),
             angular_velocity: self.robot_constrains.wheel_radius() / self.robot_constrains.chassis_base() * (wheel_speed.right_wheel_speed - wheel_speed.left_wheel_speed),
         }
+    }
+
+    pub fn integrate_robot_motion(&mut self, motion_params: MotionParameters, delta_t: f32) {
+        let dx = motion_params.linear_velocity * self.robot_orientation.cos() * delta_t;
+        let dy = motion_params.linear_velocity * self.robot_orientation.sin() * delta_t;
+        let d_fi = motion_params.angular_velocity * delta_t;
+
+        self.robot_pose = Pose::new(self.robot_pose.x() + dx, self.robot_pose.y() + dy, self.robot_pose.z());
+        self.robot_orientation += d_fi;
     }
 }
 

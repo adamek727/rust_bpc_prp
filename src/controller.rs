@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::net::UdpSocket;
 use std::thread;
 use std::thread::sleep;
@@ -16,6 +16,7 @@ use crate::motor_ramp_generator;
 use crate::motor_ramp_generator::{MotorRampGenerator, RampGeneratiorSide};
 use crate::dashboard::Dashboard;
 use termion::event::MouseButton::WheelDown;
+use crate::nmea::SimulatorResponseType;
 
 pub struct Controller {
     remote_ip: String,
@@ -43,10 +44,10 @@ impl Controller {
     pub fn run(&mut self) {
 
         let mut dashboard = Dashboard::new();
-
-        let motion_model = MotionModel::new(
-            &self.robot_constrains,
-            Pose::new(0.0, 0.0, 0.0)
+        let mut motion_model = MotionModel::new(
+            self.robot_constrains.clone(),
+            Pose::new(0.0, 0.0, 0.0),
+            0.0,
         );
         let mut left_wheel_ramp_gen = MotorRampGenerator::new(
             self.robot_constrains.max_acceleration_microsteps_per_sec(),
@@ -58,58 +59,20 @@ impl Controller {
             self.robot_constrains.max_microsteps_per_sec(),
             RampGeneratiorSide::right,
         );
-
         let (tx_data_from_simulator, rx_data_from_simulator) = channel();
         let (tx_data_to_simulator, rx_data_to_simulator) = channel();
 
         self.spawn_simulator_data_transmitter(rx_data_to_simulator);
         self.spawn_simulator_data_receiver(tx_data_from_simulator.clone());
-
         self.reset_simulation(&tx_data_to_simulator);
+        self.spawn_sensor_values_requesting(tx_data_to_simulator.clone());
 
-        let sensor_value_request_channel = tx_data_to_simulator.clone();
-        let sensor_value_request_timer = timer::Timer::new();
-        let no_of_sensors = self.robot_constrains.no_of_sensors();
-        let guard = sensor_value_request_timer.schedule_repeating(chrono::Duration::milliseconds(10), move || {
-            for i in 0..no_of_sensors {
-                sensor_value_request_channel.send(message_factory::get_sensor_value_request(i as u16));
-            }
-        });
-
-
+        let mut time = Controller::get_time();
         loop { // Main Loop
 
-            loop {  // Readout all new messages
+            self.read_incoming_messages(&rx_data_from_simulator);
 
-                match rx_data_from_simulator.recv_timeout(Duration::from_millis(0)) {
-                    Ok(response) => {
-                        match response {
-                            nmea::SimulatorResponseType::Reset { ok } => { println!("Reset: {}", ok) }
-                            nmea::SimulatorResponseType::PingPong => { println!("PingPong") }
-                            nmea::SimulatorResponseType::LeftOdometry { microsteps } => {
-                                // println!("Left Odometry: {}", microsteps)
-                            }
-                            nmea::SimulatorResponseType::RightOdometry { microsteps } => {
-                                // println!("Right Odometry: {}", microsteps)
-                            }
-                            nmea::SimulatorResponseType::Ok => {
-                                // println!("Ok")
-                            }
-                            nmea::SimulatorResponseType::Sensor { index, value } => {
-                                // println!("Sensor {} value: {}", index, value) ;
-                                self.robot_stats.set_value_for_index(index, value);
-                            }
-                            nmea::SimulatorResponseType::Invalid => {
-                                // println!("Invalid response!");
-                                self.robot_stats.set_state(RobotStateMachine::Fail);
-                            }
-                        }
-                    }
-                    _ => { break; }
-                }
-            }
-
-            let required_motion = MotionParameters::new(0.2,3.14 / 2.0);
+            let required_motion = MotionParameters::new(0.0,3.14 / 10.0);
 
             let wheel_speeds = motion_model.get_wheel_speeds( required_motion );
             let wheel_speeds_in_microsteps = motion_model.wheel_speed_to_microsteps_with_saturation(wheel_speeds);
@@ -126,19 +89,61 @@ impl Controller {
                 )
             );
 
+            let dt = (Controller::get_time() - time) as f32 / 1000.0;
+            motion_model.integrate_robot_motion(actual_motion_params, dt);
+
             tx_data_to_simulator.send(message_factory::get_left_wheel_speed_request(actual_wheel_speed_in_microsteps.left_wheel_speed()));
             tx_data_to_simulator.send(message_factory::get_right_wheel_speed_request(actual_wheel_speed_in_microsteps.right_wheel_speed()));
 
             dashboard.render();
-            dashboard.set_pose(Pose::new(0.0, 0.0, 0.0));
+            dashboard.set_pose(motion_model.get_pose());
+            dashboard.set_orientation(motion_model.get_orientation());
             dashboard.set_wheel_speed_required(wheel_speeds_in_microsteps);
             dashboard.set_wheel_speed_actual(actual_wheel_speed_in_microsteps);
             dashboard.set_motion_params_required(required_motion);
             dashboard.set_motion_params_actual(actual_motion_params);
 
+            time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("Unable to get system time").as_millis();
             sleep(Duration::from_millis(10));
         }
     }
+
+    fn read_incoming_messages(&mut self, receiver_from_simulator: &Receiver<SimulatorResponseType>) {
+        loop {  // Readout all new messages
+
+            match receiver_from_simulator.recv_timeout(Duration::from_millis(0)) {
+                Ok(response) => {
+                    match response {
+                        nmea::SimulatorResponseType::Reset { ok } => {
+                            println!("Reset: {}", ok)
+                        }
+                        nmea::SimulatorResponseType::PingPong => {
+                            println!("PingPong")
+                        }
+                        nmea::SimulatorResponseType::LeftOdometry { microsteps } => {
+                            // println!("Left Odometry: {}", microsteps)
+                        }
+                        nmea::SimulatorResponseType::RightOdometry { microsteps } => {
+                            // println!("Right Odometry: {}", microsteps)
+                        }
+                        nmea::SimulatorResponseType::Ok => {
+                            println!("Ok")
+                        }
+                        nmea::SimulatorResponseType::Sensor { index, value } => {
+                            // println!("Sensor {} value: {}", index, value) ;
+                            self.robot_stats.set_value_for_index(index, value);
+                        }
+                        nmea::SimulatorResponseType::Invalid => {
+                            // println!("Invalid response!");
+                            self.robot_stats.set_state(RobotStateMachine::Fail);
+                        }
+                    }
+                }
+                _ => { break; }
+            }
+        }
+    }
+
 
     fn spawn_simulator_data_transmitter(&self , channel_rx: Receiver<String>) {
 
@@ -179,8 +184,22 @@ impl Controller {
         });
     }
 
+    fn spawn_sensor_values_requesting(&self, sensor_value_request_channel: Sender<String>) {
+        let sensor_value_request_timer = timer::Timer::new();
+        let no_of_sensors = self.robot_constrains.no_of_sensors();
+        let guard = sensor_value_request_timer.schedule_repeating(chrono::Duration::milliseconds(10), move || {
+            for i in 0..no_of_sensors {
+                sensor_value_request_channel.send(message_factory::get_sensor_value_request(i as u16));
+            }
+        });
+    }
+
     fn reset_simulation(&self, tx_channel: &Sender<String>) {
         tx_channel.send(message_factory::get_reset_message());
         sleep(Duration::from_millis(1000));
+    }
+
+    fn get_time() -> u128 {
+        SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("Unable to get system time").as_millis()
     }
 }
