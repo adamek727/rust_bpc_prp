@@ -17,8 +17,11 @@ use crate::motor_ramp_generator::{MotorRampGenerator, RampGeneratiorSide};
 use crate::dashboard::Dashboard;
 use termion::event::MouseButton::WheelDown;
 use crate::nmea::SimulatorResponseType;
+use crate::line_estimator::LineEstimator;
+use crate::sensor_model::SensorModel;
 
 pub struct Controller {
+    sensor_models: Vec<SensorModel>,
     remote_ip: String,
     tx_port: String,
     rx_port: String,
@@ -32,6 +35,9 @@ impl Controller {
 
     pub fn new(ip: String, tx_prt: String, rx_prt: String, robot_constrains: robot::RobotPhysicalConstrains) -> Controller{
         Controller{
+            sensor_models: std::iter::repeat_with(|| SensorModel::new())
+                .take(robot_constrains.no_of_sensors())
+                .collect::<Vec<_>>(),
             remote_ip: ip,
             tx_port: tx_prt,
             rx_port: rx_prt,
@@ -43,7 +49,9 @@ impl Controller {
 
     pub fn run(&mut self) {
 
-        let mut dashboard = Dashboard::new();
+        // self.robot_stats.set_state(RobotStateMachine::Custom);
+
+        let mut dashboard = Dashboard::new(self.robot_constrains.no_of_sensors().clone());
         let mut motion_model = MotionModel::new(
             self.robot_constrains.clone(),
             Pose::new(0.0, 0.0, 0.0),
@@ -59,20 +67,79 @@ impl Controller {
             self.robot_constrains.max_microsteps_per_sec(),
             RampGeneratiorSide::right,
         );
+
+        let line_estimator = LineEstimator::new(self.robot_constrains.clone());
+
         let (tx_data_from_simulator, rx_data_from_simulator) = channel();
         let (tx_data_to_simulator, rx_data_to_simulator) = channel();
 
         self.spawn_simulator_data_transmitter(rx_data_to_simulator);
         self.spawn_simulator_data_receiver(tx_data_from_simulator.clone());
+
+
         self.reset_simulation(&tx_data_to_simulator);
         self.spawn_sensor_values_requesting(tx_data_to_simulator.clone());
+        sleep(Duration::from_millis(100));
+
 
         let mut time = Controller::get_time();
         loop { // Main Loop
 
             self.read_incoming_messages(&rx_data_from_simulator);
 
-            let required_motion = MotionParameters::new(0.0,3.14 / 10.0);
+            let mut required_motion = MotionParameters::new(0.0, 0.0);
+            let calibration_rot_speed = 0.2;
+            let calibration_rot_range = 3.14 / 8.0;
+            match self.robot_stats.state() {
+                RobotStateMachine::Initialization => {
+                    self.robot_stats.set_state(RobotStateMachine::CalibrationRotateLeft);
+                },
+                RobotStateMachine::CalibrationRotateLeft => {
+                    required_motion = MotionParameters::new(0.0, calibration_rot_speed);
+                    if motion_model.get_orientation() > calibration_rot_range {
+                        self.robot_stats.set_state(RobotStateMachine::CalibrationRotateRight);
+                    }
+                    for ind in 0..self.robot_stats.number_of_sensors() {
+                        let sensor_val = self.robot_stats.sensor_value_for_index(ind);
+                        self.sensor_models[ind].on_new_calibration_value(sensor_val);
+                    }
+                },
+                RobotStateMachine::CalibrationRotateRight => {
+                    required_motion = MotionParameters::new(0.0, -calibration_rot_speed);
+                    if motion_model.get_orientation() < -calibration_rot_range {
+                        self.robot_stats.set_state(RobotStateMachine::CalibrationCenter);
+                    }
+                    for ind in 0..self.robot_stats.number_of_sensors() {
+                        let sensor_val = self.robot_stats.sensor_value_for_index(ind);
+                        self.sensor_models[ind].on_new_calibration_value(sensor_val);
+                    }
+                },
+                RobotStateMachine::CalibrationCenter => {
+                    required_motion = MotionParameters::new(0.0, calibration_rot_speed/4.0);
+                    if motion_model.get_orientation() > 0.0 {
+                        self.robot_stats.set_state(RobotStateMachine::LineFollowing);
+                    }
+                    for ind in 0..self.robot_stats.number_of_sensors() {
+                        let sensor_val = self.robot_stats.sensor_value_for_index(ind);
+                        self.sensor_models[ind].on_new_calibration_value(sensor_val);
+                    }
+                },
+                RobotStateMachine::LineFollowing => {
+
+                    let distance_from_line = line_estimator.get_distance_from_line(&self.sensor_models, self.robot_stats.clone());
+                    dashboard.set_dist_from_line(distance_from_line);
+                    required_motion = MotionParameters::new(0.2, -distance_from_line*100.0);
+
+                },
+                RobotStateMachine::Fail => {
+                    required_motion = MotionParameters::new(0.0, 0.0);
+                },
+                RobotStateMachine::Custom => {
+                    required_motion = MotionParameters::new(0.01, 0.0);
+                },
+            }
+
+
 
             let wheel_speeds = motion_model.get_wheel_speeds( required_motion );
             let wheel_speeds_in_microsteps = motion_model.wheel_speed_to_microsteps_with_saturation(wheel_speeds);
@@ -95,16 +162,17 @@ impl Controller {
             tx_data_to_simulator.send(message_factory::get_left_wheel_speed_request(actual_wheel_speed_in_microsteps.left_wheel_speed()));
             tx_data_to_simulator.send(message_factory::get_right_wheel_speed_request(actual_wheel_speed_in_microsteps.right_wheel_speed()));
 
-            dashboard.render();
             dashboard.set_pose(motion_model.get_pose());
             dashboard.set_orientation(motion_model.get_orientation());
             dashboard.set_wheel_speed_required(wheel_speeds_in_microsteps);
             dashboard.set_wheel_speed_actual(actual_wheel_speed_in_microsteps);
             dashboard.set_motion_params_required(required_motion);
             dashboard.set_motion_params_actual(actual_motion_params);
+            dashboard.set_sensor_values(self.robot_stats.sensor_values());
+            dashboard.render();
 
             time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("Unable to get system time").as_millis();
-            sleep(Duration::from_millis(10));
+            sleep(Duration::from_millis(8));
         }
     }
 
@@ -127,10 +195,10 @@ impl Controller {
                             // println!("Right Odometry: {}", microsteps)
                         }
                         nmea::SimulatorResponseType::Ok => {
-                            println!("Ok")
+                            // println!("Ok")
                         }
                         nmea::SimulatorResponseType::Sensor { index, value } => {
-                            // println!("Sensor {} value: {}", index, value) ;
+                            // println!("Sensor {} value: {}", index, value);
                             self.robot_stats.set_value_for_index(index, value);
                         }
                         nmea::SimulatorResponseType::Invalid => {
@@ -142,6 +210,11 @@ impl Controller {
                 _ => { break; }
             }
         }
+    }
+
+    fn request_data_from_simulator(&self, channel_tx: Receiver<String>) {
+
+
     }
 
 
@@ -176,7 +249,6 @@ impl Controller {
                 if result > 0 {
                     let incoming_msg = String::from_utf8(rx_buf).expect("Unable to convert datagram to string");
                     let parsed = nmea::parse_nmea_message(&incoming_msg);
-                    // println!("{}", incoming_msg);
                     channel_tx.send(parsed);
                 }
                 sleep(Duration::from_millis(1));
@@ -185,11 +257,13 @@ impl Controller {
     }
 
     fn spawn_sensor_values_requesting(&self, sensor_value_request_channel: Sender<String>) {
-        let sensor_value_request_timer = timer::Timer::new();
         let no_of_sensors = self.robot_constrains.no_of_sensors();
-        let guard = sensor_value_request_timer.schedule_repeating(chrono::Duration::milliseconds(10), move || {
-            for i in 0..no_of_sensors {
-                sensor_value_request_channel.send(message_factory::get_sensor_value_request(i as u16));
+        thread::spawn(move || {
+            loop {
+                for i in 0..no_of_sensors {
+                    sensor_value_request_channel.send(message_factory::get_sensor_value_request(i as u16));
+                }
+                sleep(Duration::from_millis(10));
             }
         });
     }

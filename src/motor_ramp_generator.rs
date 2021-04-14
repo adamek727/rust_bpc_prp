@@ -38,25 +38,28 @@ impl MotorRampGenerator {
 
     pub fn set_required_microsteps_per_sec(&mut self, microsteps: &WheelSpeeds) {
 
+        let faster_wheel_speed = microsteps.right_wheel_speed().abs().max(microsteps.left_wheel_speed().abs());
+        let reduce_speed_ratio = (self.max_speed_in_microsteps / faster_wheel_speed).min(1.0);
 
         match &self.side {
             RampGeneratiorSide::left => {
-                self.required_microsteps_per_sec = microsteps.left_wheel_speed();
-                let left_to_right_ratio = microsteps.left_wheel_speed() / microsteps.right_wheel_speed();
+                let left_to_right_ratio = (microsteps.left_wheel_speed() / microsteps.right_wheel_speed()).abs();
                 if left_to_right_ratio < 1.0 {
                     self.ramp_ratio = left_to_right_ratio;
                 } else {
                     self.ramp_ratio = 1.0;
                 }
+                self.required_microsteps_per_sec = microsteps.left_wheel_speed() * reduce_speed_ratio;
             }
             RampGeneratiorSide::right=> {
                 self.required_microsteps_per_sec = microsteps.right_wheel_speed();
-                let right_to_left_ratio = microsteps.right_wheel_speed() / microsteps.left_wheel_speed();
+                let right_to_left_ratio = (microsteps.right_wheel_speed() / microsteps.left_wheel_speed()).abs();
                 if right_to_left_ratio < 1.0 {
                     self.ramp_ratio = right_to_left_ratio;
                 } else {
                     self.ramp_ratio = 1.0;
                 }
+                self.required_microsteps_per_sec = microsteps.right_wheel_speed() * reduce_speed_ratio;
             }
         }
     }
@@ -72,11 +75,12 @@ impl MotorRampGenerator {
             self.last_evaluation_time = time;
 
             let delta_speed = (self.required_microsteps_per_sec - self.actual_microsteps_per_sec);
-            let acceleration = delta_speed.min(self.max_acceleraton_in_microsteps * dt * self.ramp_ratio)
-                                               .max(-self.max_acceleraton_in_microsteps * dt * self.ramp_ratio);
+            let acceleration = delta_speed.min(self.max_acceleraton_in_microsteps * dt)
+                                               .max(-self.max_acceleraton_in_microsteps * dt)  * self.ramp_ratio;
 
             self.actual_microsteps_per_sec = (self.actual_microsteps_per_sec + acceleration).min(self.max_speed_in_microsteps).max(-self.max_speed_in_microsteps);
-            //println!("{} {:.2}", self.actual_microsteps_per_sec, self.actual_microsteps_per_sec / self.required_microsteps_per_sec * 100.0);
+
+            // println!("{} {:.2}, {:.2}, {:.2}", dt, delta_speed, acceleration, self.actual_microsteps_per_sec);
             self.actual_microsteps_per_sec
         }
     }

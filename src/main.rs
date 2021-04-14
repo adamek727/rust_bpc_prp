@@ -10,8 +10,13 @@ mod motion_model;
 mod motor_ramp_generator;
 mod dashboard;
 mod primitives;
+mod line_estimator;
+mod sensor_model;
 
 fn main() {
+
+    rosrust::init("BPC_PRP_CONTROLLER");
+
     let ip = String::from("127.0.0.1");
     let tx_port = String::from("8080");
     let rx_port = String::from("8081");
@@ -23,10 +28,11 @@ fn main() {
             primitives::Pose::new(0.09, 0.01, 0.01)],
         0.16,
         0.04,
-        4500.0,
-        10000.0,
+        4000.0,
+        4000.0,
         200,
-        32
+        32,
+        2.0,
     );
 
     let mut controller = controller::Controller::new(ip, tx_port, rx_port, robot_constrains);
