@@ -12,6 +12,7 @@ mod dashboard;
 mod primitives;
 mod line_estimator;
 mod sensor_model;
+mod psd_controller;
 
 fn main() {
 
@@ -22,10 +23,12 @@ fn main() {
     let rx_port = String::from("8081");
 
     let robot_constrains = robot::RobotPhysicalConstrains::new(
-        2,
+        4,
         vec![
-            primitives::Pose::new(0.09, -0.01, 0.01),
-            primitives::Pose::new(0.09, 0.01, 0.01)],
+            primitives::Pose::new(0.04, -0.02, 0.01),
+            primitives::Pose::new(0.04, 0.00, 0.01),
+            primitives::Pose::new(0.04, 0.02, 0.01),
+            primitives::Pose::new(0.010, 0.00, 0.01)],
         0.16,
         0.04,
         4000.0,

@@ -22,6 +22,7 @@ pub struct Dashboard {
     ros_publishers_sensor_values: Vec<rosrust::Publisher<rosrust_msg::std_msgs::UInt16>>,
 
     ros_publishers_distance_from_line: rosrust::Publisher<rosrust_msg::std_msgs::Float32>,
+    ros_publishers_required_ang_velocity: rosrust::Publisher<rosrust_msg::std_msgs::Float32>,
 }
 
 impl Dashboard {
@@ -40,6 +41,7 @@ impl Dashboard {
         }
 
         let distance_from_line_topic: String = String::from("/bpc_prp/robot/distance_from_line");
+        let required_ang_velocity_topic: String = String::from("/bpc_prp/robot/required_ang_vel");
 
         Dashboard {
             pose: Pose::new(0.0, 0.0, 0.0),
@@ -60,6 +62,7 @@ impl Dashboard {
             ros_publishers_sensor_values: sensor_value_publishers,
 
             ros_publishers_distance_from_line: rosrust::publish(&distance_from_line_topic, 0).unwrap(),
+            ros_publishers_required_ang_velocity: rosrust::publish(&required_ang_velocity_topic, 0).unwrap(),
         }
     }
 
@@ -131,5 +134,9 @@ impl Dashboard {
         let mut dist_from_line_msg = rosrust_msg::std_msgs::Float32::default();
         dist_from_line_msg.data = self.dist_from_line;
         self.ros_publishers_distance_from_line.send(dist_from_line_msg).unwrap();
+
+        let mut required_rotation_msg = rosrust_msg::std_msgs::Float32::default();
+        required_rotation_msg.data = self.motion_params_required.angular_velocity();
+        self.ros_publishers_required_ang_velocity.send(required_rotation_msg).unwrap();
     }
 }

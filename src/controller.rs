@@ -19,6 +19,7 @@ use termion::event::MouseButton::WheelDown;
 use crate::nmea::SimulatorResponseType;
 use crate::line_estimator::LineEstimator;
 use crate::sensor_model::SensorModel;
+use crate::psd_controller::PSDController;
 
 pub struct Controller {
     sensor_models: Vec<SensorModel>,
@@ -50,7 +51,7 @@ impl Controller {
     pub fn run(&mut self) {
 
         // self.robot_stats.set_state(RobotStateMachine::Custom);
-
+        let single_loop_period = 8;
         let mut dashboard = Dashboard::new(self.robot_constrains.no_of_sensors().clone());
         let mut motion_model = MotionModel::new(
             self.robot_constrains.clone(),
@@ -67,6 +68,7 @@ impl Controller {
             self.robot_constrains.max_microsteps_per_sec(),
             RampGeneratiorSide::right,
         );
+        let mut angular_speed_controller = PSDController::new(30.0, 0.0, 0.2);
 
         let line_estimator = LineEstimator::new(self.robot_constrains.clone());
 
@@ -126,16 +128,20 @@ impl Controller {
                 },
                 RobotStateMachine::LineFollowing => {
 
+                    let mut required_linear_velocity = 0.10; //* line_estimator.forward_sensor_val(&self.sensor_models, self.robot_stats.clone()).max(0.3);
+
                     let distance_from_line = line_estimator.get_distance_from_line(&self.sensor_models, self.robot_stats.clone());
                     dashboard.set_dist_from_line(distance_from_line);
-                    required_motion = MotionParameters::new(0.2, -distance_from_line*100.0);
+                    let required_angular_vel = angular_speed_controller.on_error_value(-distance_from_line, single_loop_period as f32/1000.0);
+
+                    required_motion = MotionParameters::new(required_linear_velocity, required_angular_vel);
 
                 },
                 RobotStateMachine::Fail => {
                     required_motion = MotionParameters::new(0.0, 0.0);
                 },
                 RobotStateMachine::Custom => {
-                    required_motion = MotionParameters::new(0.01, 0.0);
+                    required_motion = MotionParameters::new(0.0, 0.0);
                 },
             }
 
@@ -172,7 +178,7 @@ impl Controller {
             dashboard.render();
 
             time = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).expect("Unable to get system time").as_millis();
-            sleep(Duration::from_millis(8));
+            sleep(Duration::from_millis(single_loop_period));
         }
     }
 
